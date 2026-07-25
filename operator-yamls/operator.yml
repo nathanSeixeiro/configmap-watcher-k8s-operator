@@ -1,0 +1,10 @@
+apiVersion: apps.devops/v1alpha1
+kind: ConfigMapWatcher
+metadata:
+  name: configmapwatcher-sample
+  namespace: default
+spec:
+  configMapName: configmap-test
+  configMapNamespace: default
+  eventEndpoint: https://webhook.site/7af0afad-9361-457a-8126-8956fa09f717
+

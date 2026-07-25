@@ -1,0 +1,9 @@
+apiVersion: apps.devops/v1alpha1
+kind: ConfigMapWatcher
+metadata:
+  labels:
+    app.kubernetes.io/name: configmapwatcher
+    app.kubernetes.io/managed-by: kustomize
+  name: configmapwatcher-sample
+spec:
+  # TODO(user): Add fields here
