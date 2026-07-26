@@ -90,7 +90,7 @@ func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 
-	eventData := map[string]interface{}{
+	eventData := map[string]any{
 		"configMapName":      watcher.Spec.ConfigMapName,
 		"configMapNamespace": watcher.Spec.ConfigMapNamespace,
 		"version":            watcher.Status.LastConfigMapVersion,
@@ -144,7 +144,7 @@ func (r *ConfigMapWatcherReconciler) findObjectsConfigMap(ctx context.Context, o
 	return requests
 }
 
-func SendEventToEndpoint(eventData map[string]interface{}, endpoint string) error {
+func SendEventToEndpoint(eventData map[string]any, endpoint string) error {
 	logger := logf.Log.WithName("SendEventToEndpoint")
 	var httpClient = &http.Client{}
 	jsonData, err := json.Marshal(eventData)
@@ -157,7 +157,11 @@ func SendEventToEndpoint(eventData map[string]interface{}, endpoint string) erro
 		logger.Error(err, "Failed to send event to endpoint")
 		return err
 	}
-	defer res.Body.Close()
+	defer func() {
+		if cerr := res.Body.Close(); cerr != nil {
+			logger.Error(cerr, "failed to close response body")
+		}
+	}()
 
 	if res.StatusCode != http.StatusOK {
 		logger.Error(nil, "Failed to send event to endpoint, status code not OK", "statusCode", res.StatusCode)
