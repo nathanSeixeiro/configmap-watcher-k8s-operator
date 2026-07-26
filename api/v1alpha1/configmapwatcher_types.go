@@ -33,14 +33,20 @@ type ConfigMapWatcherSpec struct {
 
 // ConfigMapWatcherStatus defines the observed state of ConfigMapWatcher.
 type ConfigMapWatcherStatus struct {
-	LastConfigMapVersion string             `json:"lastConfigMapVersion,omitempty"`
-	LastEventSent        metav1.Time        `json:"lastEventSent,omitempty"`
-	Conditions           []metav1.Condition `json:"conditions,omitempty"`
+	LastConfigMapVersion string      `json:"lastConfigMapVersion,omitempty"`
+	LastEventSent        metav1.Time `json:"lastEventSent,omitempty"`
+
+	LastSyncTime       metav1.Time `json:"lastSyncTime,omitempty"`
+	LastEventStatus    string      `json:"lastEventStatus,omitempty"`
+	ObservedGeneration int64       `json:"observedGeneration,omitempty"`
+
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.lastEventStatus`
+// +kubebuilder:printcolumn:name="LastSync",type=string,JSONPath=`.status.lastSyncTime`
 // ConfigMapWatcher is the Schema for the configmapwatchers API
 type ConfigMapWatcher struct {
 	metav1.TypeMeta `json:",inline"`

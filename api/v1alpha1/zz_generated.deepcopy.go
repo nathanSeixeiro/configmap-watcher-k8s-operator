@@ -103,6 +103,7 @@ func (in *ConfigMapWatcherSpec) DeepCopy() *ConfigMapWatcherSpec {
 func (in *ConfigMapWatcherStatus) DeepCopyInto(out *ConfigMapWatcherStatus) {
 	*out = *in
 	in.LastEventSent.DeepCopyInto(&out.LastEventSent)
+	in.LastSyncTime.DeepCopyInto(&out.LastSyncTime)
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

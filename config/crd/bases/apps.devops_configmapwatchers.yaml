@@ -14,7 +14,14 @@ spec:
     singular: configmapwatcher
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.lastEventStatus
+      name: Status
+      type: string
+    - jsonPath: .status.lastSyncTime
+      name: LastSync
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: ConfigMapWatcher is the Schema for the configmapwatchers API
@@ -114,6 +121,14 @@ spec:
               lastEventSent:
                 format: date-time
                 type: string
+              lastEventStatus:
+                type: string
+              lastSyncTime:
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
             type: object
         required:
         - spec

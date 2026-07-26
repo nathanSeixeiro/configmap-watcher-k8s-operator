@@ -176,8 +176,16 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("waiting for the status to be updated as Success")
+			Eventually(func(g Gomega) {
+				resource := &appsv1alpha1.ConfigMapWatcher{}
+				getErr := k8sClient.Get(ctx, typeNamespacedName, resource)
+				g.Expect(getErr).NotTo(HaveOccurred())
+				g.Expect(resource.Status.LastEventStatus).To(Equal("Success"))
+				g.Expect(resource.Status.LastConfigMapVersion).NotTo(BeEmpty())
+				g.Expect(resource.Status.ObservedGeneration).To(Equal(resource.Generation))
+			}).Should(Succeed())
 		})
 	})
 })

@@ -4,17 +4,28 @@ Operator Kubernetes em Go (Kubebuilder) para observar mudanças em um ConfigMap 
 
 ## O que este operador faz
 
-- Registra o CRD `ConfigMapWatcher` no grupo `apps.devops/v1alpha1`.
+- Registra o CRD ConfigMapWatcher no grupo apps.devops/v1alpha1.
 - Permite configurar qual ConfigMap observar por nome e namespace.
-- Ao reconciliar, envia um payload JSON para o endpoint configurado em `spec.eventEndpoint`.
+- Ao reconciliar, envia um payload JSON para o endpoint configurado em spec.eventEndpoint.
+- Atualiza status com resultado do envio (Success ou Failed), condições e horário do último sync.
+- Usa retry em conflito de atualização de status com RetryOnConflict e re-fetch do recurso.
 
-## API (`apps.devops/v1alpha1`)
+## API (apps.devops/v1alpha1)
 
-### `ConfigMapWatcher.spec`
+### ConfigMapWatcher.spec
 
-- `configMapName` (string, obrigatório): nome do ConfigMap monitorado.
-- `configMapNamespace` (string, obrigatório): namespace do ConfigMap monitorado.
-- `eventEndpoint` (string, obrigatório): URL HTTP para receber o evento.
+- configMapName (string, obrigatório): nome do ConfigMap monitorado.
+- configMapNamespace (string, obrigatório): namespace do ConfigMap monitorado.
+- eventEndpoint (string, obrigatório): URL HTTP para receber o evento.
+
+### ConfigMapWatcher.status
+
+- lastEventStatus: Success ou Failed.
+- lastSyncTime: horário da última sincronização bem-sucedida.
+- lastConfigMapVersion: ResourceVersion do ConfigMap processado com sucesso.
+- lastEventSent: timestamp da última tentativa bem-sucedida de envio.
+- observedGeneration: geração observada no status.
+- conditions: condição Synced com reason SendSuccess ou SendFailed.
 
 ### Exemplo de recurso
 
@@ -27,7 +38,7 @@ metadata:
 spec:
     configMapName: configmap-test
     configMapNamespace: default
-    eventEndpoint: https://webhook.site/<seu-id>
+    eventEndpoint: https://webhook.site/seu-id
 ```
 
 ## Pré-requisitos
@@ -77,6 +88,13 @@ make deploy IMG=<registry>/configmapwatcher:<tag>
 kubectl apply -k config/samples/
 ```
 
+5. Verificar status:
+
+```sh
+kubectl get configmapwatchers -A
+kubectl get configmapwatcher configmapwatcher-sample -n default -o yaml
+```
+
 ## Teste rápido
 
 1. Crie um ConfigMap de teste:
@@ -99,23 +117,35 @@ kubectl patch configmap configmap-test -n default --type merge -p '{"data":{"key
 kubectl logs -n configmapwatcher-system deploy/configmapwatcher-controller-manager -c manager
 ```
 
+5. Verifique o status do CR:
+
+```sh
+kubectl get configmapwatcher configmapwatcher-sample -n default -o jsonpath='{.status.lastEventStatus}{"\n"}'
+kubectl get configmapwatcher configmapwatcher-sample -n default -o jsonpath='{.status.conditions[?(@.type=="Synced")].reason}{"\n"}'
+```
+
 ## Testes
 
-- Unit tests:
+- Unit tests e integration tests (envtest):
 
 ```sh
 make test
 ```
 
-- End-to-end tests:
+- End-to-end tests (Kind):
 
 ```sh
 make test-e2e
 ```
 
+Observação importante:
+
+- make test nao executa e2e.
+- make test-e2e executa a suite e2e completa em cluster Kind.
+
 ## Troubleshooting
 
-### CRD com domínio antigo (`apps.github.com`)
+### CRD com domínio antigo (apps.github.com)
 
 Se você mudou o domínio no projeto, mas o cluster ainda mostra o CRD antigo, rode:
 
@@ -128,9 +158,25 @@ kubectl get crds | grep configmapwatchers.apps
 
 O esperado é aparecer `configmapwatchers.apps.devops`.
 
-### Warning `unrecognized format "int64"`
+### Warning unrecognized format "int64"
 
 Esse warning pode aparecer no `controller-gen` e, neste projeto, não impede a criação do CRD.
+
+### Status nao muda para Success
+
+Verifique estes pontos:
+
+- O endpoint responde HTTP 200.
+- O ConfigMap referenciado existe no namespace correto.
+- O controller está rodando e sem erro de RBAC.
+
+Comandos úteis:
+
+```sh
+kubectl logs -n configmapwatcher-system deploy/configmapwatcher-controller-manager -c manager
+kubectl get configmap -n default
+kubectl describe configmapwatcher configmapwatcher-sample -n default
+```
 
 ## Limpeza
 
@@ -146,6 +192,11 @@ make cleanup-test-e2e
 ```sh
 make help
 ```
+
+## Documentação adicional
+
+- docs/ARCHITECTURE.md
+- docs/TESTING.md
 
 ## Referências
 

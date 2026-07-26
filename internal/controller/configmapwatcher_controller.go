@@ -24,10 +24,13 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	errors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -100,12 +103,19 @@ func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	err = SendEventToEndpoint(eventData, watcher.Spec.EventEndpoint)
-	if err != nil {
-		logger.Error(err, "Failed to send event to endpoint")
-		return ctrl.Result{}, err
+
+	statusErr := r.StatusHandler(ctx, &watcher, version, err)
+	if statusErr != nil {
+		logger.Error(statusErr, "Failed to update status")
+		return ctrl.Result{}, statusErr
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	if err != nil {
+		logger.Error(err, "Failed to send event to endpoint")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -169,4 +179,44 @@ func SendEventToEndpoint(eventData map[string]any, endpoint string) error {
 	}
 
 	return nil
+}
+
+func (r *ConfigMapWatcherReconciler) StatusHandler(ctx context.Context, w *appsv1alpha1.ConfigMapWatcher, configMapVersion string, sendErr error) error {
+	key := types.NamespacedName{Name: w.Name, Namespace: w.Namespace}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		latest := &appsv1alpha1.ConfigMapWatcher{}
+		err := r.Get(ctx, key, latest)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+
+		condition := metav1.Condition{
+			Type:               "Synced",
+			ObservedGeneration: latest.Generation,
+			LastTransitionTime: metav1.Now(),
+		}
+
+		if sendErr != nil {
+			latest.Status.LastEventStatus = "Failed"
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = "SendFailed"
+			condition.Message = sendErr.Error()
+		} else {
+			latest.Status.LastEventStatus = "Success"
+			latest.Status.LastSyncTime = metav1.Now()
+			latest.Status.LastConfigMapVersion = configMapVersion
+			latest.Status.LastEventSent = metav1.Now()
+			condition.Status = metav1.ConditionTrue
+			condition.Reason = "SendSuccess"
+			condition.Message = "Successfully synced"
+		}
+
+		latest.Status.ObservedGeneration = latest.Generation
+		meta.SetStatusCondition(&latest.Status.Conditions, condition)
+		return r.Status().Update(ctx, latest)
+	})
 }
