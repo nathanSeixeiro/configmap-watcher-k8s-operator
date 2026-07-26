@@ -268,6 +268,62 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
 
+		It("should create a ConfigMapWatcher custom resource", func() {
+			const (
+				e2eConfigMapName = "configmapwatcher-e2e-cm"
+				e2eWatcherName   = "configmapwatcher-e2e"
+			)
+
+			By("creating a ConfigMap used by ConfigMapWatcher")
+			cmd := exec.Command("kubectl", "create", "configmap", e2eConfigMapName,
+				"--from-literal", "key=value",
+				"-n", namespace,
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create e2e ConfigMap")
+
+			By("creating a ConfigMapWatcher custom resource")
+			applyCmd := fmt.Sprintf(`cat <<'EOF' | kubectl apply -f -
+apiVersion: apps.devops/v1alpha1
+kind: ConfigMapWatcher
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  configMapName: %s
+  configMapNamespace: %s
+  eventEndpoint: http://example.com
+EOF`, e2eWatcherName, namespace, e2eConfigMapName, namespace)
+			cmd = exec.Command("bash", "-c", applyCmd)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ConfigMapWatcher")
+
+			By("verifying the ConfigMapWatcher exists in the cluster")
+			verifyWatcherCreated := func(g Gomega) {
+				cmd = exec.Command("kubectl", "get", "configmapwatcher", e2eWatcherName,
+					"-n", namespace,
+					"-o", "jsonpath={.metadata.name}",
+				)
+				output, getErr := utils.Run(cmd)
+				g.Expect(getErr).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal(e2eWatcherName))
+			}
+			Eventually(verifyWatcherCreated).Should(Succeed())
+
+			By("cleaning up ConfigMapWatcher and ConfigMap")
+			cmd = exec.Command("kubectl", "delete", "configmapwatcher", e2eWatcherName,
+				"-n", namespace,
+				"--ignore-not-found",
+			)
+			_, _ = utils.Run(cmd)
+
+			cmd = exec.Command("kubectl", "delete", "configmap", e2eConfigMapName,
+				"-n", namespace,
+				"--ignore-not-found",
+			)
+			_, _ = utils.Run(cmd)
+		})
+
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
