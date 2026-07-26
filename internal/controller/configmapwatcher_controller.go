@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,7 +44,8 @@ import (
 // ConfigMapWatcherReconciler reconciles a ConfigMapWatcher object
 type ConfigMapWatcherReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=apps.devops,resources=configmapwatchers,verbs=get;list;watch;create;update;patch;delete
@@ -61,7 +63,6 @@ type ConfigMapWatcherReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/reconcile
 func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
-
 	var watcher appsv1alpha1.ConfigMapWatcher
 
 	err := r.Get(ctx, req.NamespacedName, &watcher)
@@ -82,7 +83,7 @@ func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err != nil {
 		if errors.IsNotFound(err) {
 			logger.Error(err, "ConfigMap resource not found. Ignoring since object must be deleted")
-			return ctrl.Result{}, nil
+			return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 		}
 		logger.Error(err, "Failed to get ConfigMap ")
 		return ctrl.Result{}, err
@@ -107,14 +108,20 @@ func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	statusErr := r.StatusHandler(ctx, &watcher, version, err)
 	if statusErr != nil {
 		logger.Error(statusErr, "Failed to update status")
+		r.Recorder.Eventf(&watcher, corev1.EventTypeWarning, "SendFailed",
+			"failed to update status for %s: %v", watcher.Spec.EventEndpoint, err)
 		return ctrl.Result{}, statusErr
 	}
 
 	if err != nil {
 		logger.Error(err, "Failed to send event to endpoint")
+		r.Recorder.Eventf(&watcher, corev1.EventTypeWarning, "SendFailed",
+			"failed to send event to %s: %v", watcher.Spec.EventEndpoint, err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
+	r.Recorder.Eventf(&watcher, corev1.EventTypeNormal, "SendSucceeded",
+		"event sent successfully to %s", watcher.Spec.EventEndpoint)
 	return ctrl.Result{}, nil
 }
 
