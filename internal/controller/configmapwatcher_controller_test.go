@@ -20,12 +20,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,9 +42,6 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 			resourceNamespace = "default"
 		)
 
-		ctx := context.Background()
-		var endpointServer *httptest.Server
-
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
 			Namespace: resourceNamespace,
@@ -51,10 +50,10 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 			Name:      "test-configmap",
 			Namespace: resourceNamespace,
 		}
-		configmapwatcher := &appsv1alpha1.ConfigMapWatcher{}
 
 		BeforeEach(func() {
-			endpointServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			ctx := context.Background()
+			endpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
 
@@ -73,6 +72,7 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 			}
 
 			By("creating the custom resource for the Kind ConfigMapWatcher")
+			configmapwatcher := &appsv1alpha1.ConfigMapWatcher{}
 			err = k8sClient.Get(ctx, typeNamespacedName, configmapwatcher)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &appsv1alpha1.ConfigMapWatcher{
@@ -88,42 +88,46 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
-		})
 
-		AfterEach(func() {
-			if endpointServer != nil {
-				endpointServer.Close()
-			}
+			DeferCleanup(func() {
+				if endpointServer != nil {
+					endpointServer.Close()
+				}
 
-			resource := &appsv1alpha1.ConfigMapWatcher{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				By("Cleanup the specific resource instance ConfigMapWatcher")
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-			} else {
-				Expect(errors.IsNotFound(err)).To(BeTrue())
-			}
+				resource := &appsv1alpha1.ConfigMapWatcher{}
+				err := k8sClient.Get(ctx, typeNamespacedName, resource)
+				if err == nil {
+					By("Cleanup the specific resource instance ConfigMapWatcher")
+					Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				} else {
+					Expect(errors.IsNotFound(err)).To(BeTrue())
+				}
 
-			configMap := &corev1.ConfigMap{}
-			err = k8sClient.Get(ctx, configMapNamespacedName, configMap)
-			if err == nil {
-				By("Cleanup the referenced ConfigMap")
-				Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
-			} else {
-				Expect(errors.IsNotFound(err)).To(BeTrue())
-			}
+				configMap := &corev1.ConfigMap{}
+				err = k8sClient.Get(ctx, configMapNamespacedName, configMap)
+				if err == nil {
+					By("Cleanup the referenced ConfigMap")
+					Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
+				} else {
+					Expect(errors.IsNotFound(err)).To(BeTrue())
+				}
+			})
 		})
 
 		It("should ignore reconcile when the ConfigMapWatcher does not exist", func() {
+			ctx := context.Background()
+
 			By("deleting the resource before reconcile")
 			resource := &appsv1alpha1.ConfigMapWatcher{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 
 			By("reconciling a missing resource")
+			eventRecorder := record.NewFakeRecorder(10)
 			controllerReconciler := &ConfigMapWatcherReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: eventRecorder,
 			}
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -132,23 +136,29 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 		})
 
 		It("should ignore reconcile when referenced ConfigMap does not exist", func() {
+			ctx := context.Background()
+
 			By("deleting the referenced ConfigMap before reconcile")
 			configMap := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, configMapNamespacedName, configMap)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, configMap)).To(Succeed())
 
 			By("reconciling with a missing ConfigMap")
+			eventRecorder := record.NewFakeRecorder(10)
 			controllerReconciler := &ConfigMapWatcherReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: eventRecorder,
 			}
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(reconcile.Result{}))
+			Expect(result.RequeueAfter).To(Equal(15 * time.Second))
 		})
 
 		It("should return error when endpoint is unreachable", func() {
+			ctx := context.Background()
+
 			By("updating the watcher endpoint to an unreachable URL")
 			resource := &appsv1alpha1.ConfigMapWatcher{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -156,9 +166,11 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
 
 			By("reconciling and expecting an endpoint error")
+			eventRecorder := record.NewFakeRecorder(10)
 			controllerReconciler := &ConfigMapWatcherReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: eventRecorder,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -166,10 +178,14 @@ var _ = Describe("ConfigMapWatcher Controller", func() {
 		})
 
 		It("should successfully reconcile the resource", func() {
+			ctx := context.Background()
+
 			By("Reconciling the created resource")
+			eventRecorder := record.NewFakeRecorder(10)
 			controllerReconciler := &ConfigMapWatcherReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: eventRecorder,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

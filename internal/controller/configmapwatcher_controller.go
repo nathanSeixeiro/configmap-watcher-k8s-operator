@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	// "errors"
 	"net/http"
 	"time"
 
@@ -181,7 +182,8 @@ func SendEventToEndpoint(eventData map[string]any, endpoint string) error {
 	}()
 
 	if res.StatusCode != http.StatusOK {
-		logger.Error(nil, "Failed to send event to endpoint, status code not OK", "statusCode", res.StatusCode)
+		// err := errors.New("endpoint returned non-OK status code")
+		logger.Error(err, "Failed to send event to endpoint, status code not OK", "statusCode", res.StatusCode)
 		return err
 	}
 
