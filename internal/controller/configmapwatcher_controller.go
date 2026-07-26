@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	// "errors"
 	"net/http"
 	"time"
 
@@ -40,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1alpha1 "github.com/nathanSeixeiro/configmap-watcher-k8s-operator/api/v1alpha1"
+	"github.com/nathanSeixeiro/configmap-watcher-k8s-operator/internal/metrics"
 )
 
 // ConfigMapWatcherReconciler reconciles a ConfigMapWatcher object
@@ -104,13 +104,16 @@ func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		"binaryData":         configMap.BinaryData,
 	}
 
+	start := time.Now()
 	err = SendEventToEndpoint(eventData, watcher.Spec.EventEndpoint)
+	metrics.SendDurationSeconds.WithLabelValues(watcher.Name, watcher.Namespace).Observe(time.Since(start).Seconds())
 
 	statusErr := r.StatusHandler(ctx, &watcher, version, err)
 	if statusErr != nil {
 		logger.Error(statusErr, "Failed to update status")
 		r.Recorder.Eventf(&watcher, corev1.EventTypeWarning, "SendFailed",
 			"failed to update status for %s: %v", watcher.Spec.EventEndpoint, err)
+		metrics.EventsFailedTotal.WithLabelValues(watcher.Name, watcher.Namespace).Inc()
 		return ctrl.Result{}, statusErr
 	}
 
@@ -118,11 +121,13 @@ func (r *ConfigMapWatcherReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		logger.Error(err, "Failed to send event to endpoint")
 		r.Recorder.Eventf(&watcher, corev1.EventTypeWarning, "SendFailed",
 			"failed to send event to %s: %v", watcher.Spec.EventEndpoint, err)
+		metrics.EventsFailedTotal.WithLabelValues(watcher.Name, watcher.Namespace).Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
 	r.Recorder.Eventf(&watcher, corev1.EventTypeNormal, "SendSucceeded",
 		"event sent successfully to %s", watcher.Spec.EventEndpoint)
+	metrics.EventSentTotal.WithLabelValues(watcher.Name, watcher.Namespace).Inc()
 	return ctrl.Result{}, nil
 }
 
